@@ -123,6 +123,17 @@ func TokenStr(str string) Rule {
 	return Token([]byte(str))
 }
 
+func SepBy1(r, sep Rule) Rule {
+	return &sepBy1Rule{
+		r:   r,
+		sep: sep,
+	}
+}
+
+func SepBy(r, sep Rule) Rule {
+	return Choice(SepBy1(r, sep), Seq())
+}
+
 type seqRule struct {
 	rules []Rule
 }
@@ -538,4 +549,47 @@ func (r *tokenRule) parse(p *parserState, pos Position) RuleResult {
 		Start: pos,
 		End:   end,
 	}}
+}
+
+type sepBy1Rule struct {
+	r   Rule
+	sep Rule
+}
+
+func (s *sepBy1Rule) parse(p *parserState, pos Position) RuleResult {
+	var start = pos
+	var ret []Node
+
+	res := p.applyRule(s.r, pos)
+	if res.Failed {
+		return res
+	}
+	ret = append(ret, res.Node)
+	pos = res.Node.End
+
+	for {
+		sepRes := p.applyRule(s.sep, pos)
+		if sepRes.Failed {
+			break
+		}
+
+		res := p.applyRule(s.r, sepRes.Node.End)
+		if res.Failed {
+			break
+		}
+
+		pos = res.Node.End
+
+		if res.Node.Value != nil {
+			ret = append(ret, res.Node)
+		}
+	}
+
+	return RuleResult{
+		Node: Node{
+			Value: ret,
+			Start: start,
+			End:   pos,
+		},
+	}
 }
