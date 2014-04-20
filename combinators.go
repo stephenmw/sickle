@@ -1,7 +1,9 @@
 package sickle
 
 import (
+	"bytes"
 	"reflect"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -70,6 +72,55 @@ func Left(left, right Rule) Rule {
 		left:  left,
 		right: right,
 	}
+}
+
+func Right(left, right Rule) Rule {
+	return &rightRule{
+		left:  left,
+		right: right,
+	}
+}
+
+func In(str string) Rule {
+	runes := []rune(str)
+	rs := make([]Rule, len(runes))
+	for i, v := range runes {
+		rs[i] = Ch(v)
+	}
+
+	return Choice(rs...)
+}
+
+func Opt(r Rule) Rule {
+	return &optRule{r: r}
+}
+
+func OptSeq(rules ...Rule) Rule {
+	return Opt(Seq(rules...))
+}
+
+func Ignore(r Rule) Rule {
+	return &ignoreRule{r: r}
+}
+
+func And(r Rule) Rule {
+	return &andRule{r: r}
+}
+
+func Not(r Rule) Rule {
+	return &notRule{r: r}
+}
+
+func NotIn(chars string) Rule {
+	return &notInRule{chars: chars}
+}
+
+func Token(str []byte) Rule {
+	return &tokenRule{str: str}
+}
+
+func TokenStr(str string) Rule {
+	return Token([]byte(str))
 }
 
 type seqRule struct {
@@ -349,4 +400,142 @@ func (l *leftRule) parse(p *parserState, pos Position) RuleResult {
 	resL.Node.End = resR.Node.End
 
 	return resL
+}
+
+type rightRule struct {
+	left, right Rule
+}
+
+func (r *rightRule) parse(p *parserState, pos Position) RuleResult {
+	resL := p.applyRule(r.left, pos)
+	if resL.Failed {
+		return resL
+	}
+
+	resR := p.applyRule(r.right, resL.Node.End)
+	if resR.Failed {
+		return resR
+	}
+
+	resR.Node.Start = resL.Node.Start
+
+	return resR
+}
+
+type optRule struct {
+	r Rule
+}
+
+func (o *optRule) parse(p *parserState, pos Position) RuleResult {
+	res := p.applyRule(o.r, pos)
+	if res.Failed {
+		return RuleResult{
+			Node: Node{
+				Value: None,
+				Start: pos,
+				End:   pos,
+			},
+		}
+	}
+
+	return res
+}
+
+type ignoreRule struct {
+	r Rule
+}
+
+func (r *ignoreRule) parse(p *parserState, pos Position) RuleResult {
+	res := p.applyRule(r.r, pos)
+	if res.Failed {
+		return res
+	}
+
+	res.Node.Value = nil
+	return res
+}
+
+type andRule struct {
+	r Rule
+}
+
+func (r *andRule) parse(p *parserState, pos Position) RuleResult {
+	res := p.applyRule(r.r, pos)
+	if res.Failed {
+		return res
+	}
+
+	res.Node.End = pos
+
+	return res
+}
+
+type notRule struct {
+	r Rule
+}
+
+func (r *notRule) parse(p *parserState, pos Position) RuleResult {
+	res := p.applyRule(r.r, pos)
+	if !res.Failed {
+		return RuleResult{Failed: true}
+	}
+
+	return RuleResult{Node: Node{
+		Start: pos,
+		End:   pos,
+	}}
+}
+
+type notInRule struct {
+	chars string
+}
+
+func (r *notInRule) parse(p *parserState, pos Position) RuleResult {
+	if pos.Bytes >= uint64(len(p.input)) {
+		// EOF reached
+		return RuleResult{Failed: true}
+	}
+
+	ru, n := utf8.DecodeRune(p.input[pos.Bytes:])
+	if strings.ContainsRune(r.chars, ru) || ru == utf8.RuneError {
+		// even if it is a rune error, we don't trust it.
+		return RuleResult{Failed: true}
+	}
+
+	end := pos
+	end.Bytes += uint64(n)
+	end.Bits = 0
+
+	return RuleResult{Node: Node{
+		Value: ru,
+		Start: pos,
+		End:   end,
+	}}
+}
+
+type tokenRule struct {
+	str []byte
+}
+
+func (r *tokenRule) parse(p *parserState, pos Position) RuleResult {
+	if pos.Bytes+uint64(len(r.str)) > uint64(len(p.input)) {
+		// not enough bytes
+		return RuleResult{Failed: true}
+	}
+
+	i := pos.Bytes
+	input := p.input[i : i+uint64(len(r.str))]
+	if !bytes.Equal(input, r.str) {
+		return RuleResult{Failed: true}
+	}
+
+	end := pos
+	end.Bytes += uint64(len(r.str))
+	end.Bits = 0
+
+	return RuleResult{Node: Node{
+		Value: input,
+		Start: pos,
+		End:   end,
+	}}
 }

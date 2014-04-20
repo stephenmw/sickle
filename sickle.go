@@ -266,3 +266,7 @@ func (m *memoEntry) setResult(res RuleResult) {
 type ActionFunc func(node Node) Node
 
 type PredicateFunc func(node Node) bool
+
+type NoneType struct{}
+
+var None NoneType
